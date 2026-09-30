@@ -1,0 +1,10 @@
+notebook
+numpy
+pandas
+tensorly
+torch
+flexible-fl
+scikit-learn
+tqdm
+scipy
+pytorch-lightning
