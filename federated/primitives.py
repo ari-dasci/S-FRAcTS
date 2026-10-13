@@ -188,7 +188,6 @@ def _free_client_models(pool):
             del fm["optimizer_kwargs"]
     torch.cuda.empty_cache()
     gc.collect()
-    print("  [MEM] Client models freed from pool")
 
 
 def _free_aggregator_state(pool):

@@ -153,7 +153,7 @@ def _collect_qkv_activations(model: nn.Module, dataloader: DataLoader, max_batch
             k_acts[idx] = torch.cat(k_lists[idx], dim=0)
             v_acts[idx] = torch.cat(v_lists[idx], dim=0)
         else:
-            # No activations collected (should not happen), fallback to empty tensors
+            # No activations collected: return empty tensors
             q_acts[idx] = torch.empty(0)
             k_acts[idx] = torch.empty(0)
             v_acts[idx] = torch.empty(0)
@@ -165,17 +165,13 @@ def _collect_qkv_activations(model: nn.Module, dataloader: DataLoader, max_batch
 
 
 def _extract_norm_vecs(q_acts, k_acts, v_acts, n_heads_layer):
-    """Extract normalized mean-pooled per-head activation vectors (tiny
-    numpy arrays) from raw Q/K/V activation tensors.
+    """Extract normalized mean-pooled per-head activation vectors from raw
+    Q/K/V activation tensors.
 
-    For each head h the raw activations have shape (T, D) where T is the
-    total number of tokens across all batches.  We average across T to get
-    a single (D,) direction vector, then L2-normalise it.  This captures
-    the *average activation direction* of each head and is used to compute
-    cosine similarities between clients / server.
-
-    Storing (D,)=64 floats per head instead of (T*D,)~millions of floats
-    makes memory negligible even with 50+ clients.
+    For each head h the raw activations have shape (T, D), where T is the
+    total number of tokens across all batches. They are averaged over T and
+    L2-normalized, giving one (D,) vector per head that is used to compute
+    cosine similarities between clients and server.
 
     Returns:
         q_vecs, k_vecs, v_vecs: each is a list of length n_heads_layer
@@ -186,7 +182,7 @@ def _extract_norm_vecs(q_acts, k_acts, v_acts, n_heads_layer):
 
     q_vecs, k_vecs, v_vecs = [], [], []
     for h in range(n_heads_layer):
-        # Mean-pool across tokens → (D,), then normalise
+        # Mean-pool across tokens -> (D,), then normalize
         q_vecs.append(_norm(q_acts[:, h, :].mean(dim=0)).float().numpy())
         k_vecs.append(_norm(k_acts[:, h, :].mean(dim=0)).float().numpy())
         v_vecs.append(_norm(v_acts[:, h, :].mean(dim=0)).float().numpy())
@@ -213,29 +209,25 @@ def aggregate_fracts(
     """
     QKV aggregation combining pairwise centrality and server-guided similarity.
 
-    Round 1  – pairwise centrality only:
+    Round 1 - pairwise centrality only:
         For each attention layer and head position, compute pairwise cosine
         similarity of Q/K/V activations across all clients (no server reference
         since the server model is random at this stage).  Select the client
         head with the highest centrality score (most similar to the rest of
-        the pool).  Non-attention layers → FedAvg.
+        the pool). Non-attention layers use FedAvg.
 
-    Round >= 2  – combined score:
+    Round >= 2 - combined score:
         For every (server_head i, client_head j) pair the assignment score is:
 
             score[i, j] = alpha * sim_server[i, j]
                         + (1 - alpha) * centrality_norm[j]
 
         where:
-        • sim_server[i, j]     – cosine similarity of server head i Q/K/V
-                                  activations vs client head j activations.
-        • centrality_norm[j]   – pairwise centrality of client-head j across
-                                  the full client pool, normalised to [0, 1]
-                                  so it is on the same scale as cosine scores.
-                                  Outlier client-heads (far from the consensus)
-                                  receive low centrality and are penalised even
-                                  if they happen to be cosine-close to the
-                                  server head at that round.
+        - sim_server[i, j]: cosine similarity between the Q/K/V activations
+          of server head i and client head j.
+        - centrality_norm[j]: pairwise centrality of client head j across
+          the client pool, normalized to [0, 1]. Client heads far from the
+          consensus receive low centrality.
 
         Assignment uses a capacity-aware greedy algorithm
         (max_repeats defaults to max(1, N//2)).
@@ -247,8 +239,6 @@ def aggregate_fracts(
         centrality term.  Set alpha=1.0 to select purely by server similarity;
         set alpha=0.0 for pure centrality selection guided by the server shape.
     """
-    print(f"Version qkv_centrality_v2: combined centrality+server  alpha={alpha}")
-
     list_of_weights_dict = aggregator_flex_model["weights"]
     if not list_of_weights_dict:
         raise ValueError("No client weights found in aggregator_flex_model['weights'].")
@@ -318,7 +308,7 @@ def aggregate_fracts(
 
         client_norm_vecs.append(per_layer)
 
-    # Round 1 – pairwise centrality only (server not yet trained)
+    # Round 1: pairwise centrality only (server not yet trained)
     if round == 1:
         print("Round 1: pairwise centrality head selection")
 
@@ -396,11 +386,11 @@ def aggregate_fracts(
         del client_norm_vecs, aggregated_state
         torch.cuda.empty_cache()
         gc.collect()
-        print("Round 1 done – representative heads selected")
+        print("Round 1 done: representative heads selected")
         return
 
-    # Round >= 2 – combined score: server similarity + centrality
-    print(f"Round >= 2  (round={round}) – combined score alpha={alpha}")
+    # Round >= 2: combined score of server similarity and centrality
+    print(f"Round {round}: combined score, alpha={alpha}")
 
     # Collect server activations -> norm vecs -> free raw tensors
     server_q, server_k, server_v, _ = _collect_qkv_activations(server_model, control_loader, max_batches=max_batches)
@@ -469,15 +459,13 @@ def aggregate_fracts(
                     count += 1
                 centrality_raw[j] = score / max(1, count)
 
-        # Normalise BOTH terms to [0, 1] so alpha is a true weight.
-        # sim_server ∈ [-1, 1] and centrality_raw ∈ [-1, 1] in theory, but
-        # without normalisation their different ranges make alpha misleading.
+        # Min-max normalize both terms to [0, 1] so they are on the same scale
         def _minmax(arr):
             lo, hi = arr.min(), arr.max()
             return np.ones_like(arr) if hi <= lo else (arr - lo) / (hi - lo)
 
-        sim_server_norm   = _minmax(sim_server)          # [N, M] → [0, 1]
-        centrality_norm   = _minmax(centrality_raw)      # [M]    → [0, 1]
+        sim_server_norm = _minmax(sim_server)        # [N, M]
+        centrality_norm = _minmax(centrality_raw)    # [M]
 
         # Combined score
         # Broadcast centrality_norm across rows (same for all server heads)
@@ -486,7 +474,6 @@ def aggregate_fracts(
         # Capacity-aware greedy assignment
         if max_repeats is None:
             cap = max(1, N // 2)
-            print(f"  layer={q_name} | max_repeats defaulting to {cap} (N//2={N}//2)")
         else:
             cap = int(max_repeats)
         if cap * M < N:
@@ -504,7 +491,7 @@ def aggregate_fracts(
             assignment[int(i)] = chosen
             capacities[chosen] -= 1
 
-        # Fill any un-assigned rows (should not happen, safety net)
+        # Fill any unassigned rows
         for r in range(N):
             if r not in assignment:
                 assignment[r] = int(np.argmax(score_matrix[r, :]))
@@ -542,7 +529,7 @@ def aggregate_fracts(
         aggregated_state[k_name].copy_(Wk_agg)
         aggregated_state[v_name].copy_(Wv_agg)
 
-    # Non-attention layers → FedAvg
+    # Non-attention layers: FedAvg
     attn_weight_keys = (
         {n[0] for n in attn_param_names}
         | {n[1] for n in attn_param_names}
@@ -587,8 +574,6 @@ def aggregate_fedatt(
     metric: order of the norm used as the server-client distance (the `ord`
         argument of torch.linalg.norm; 2 = Euclidean/spectral norm, as in the paper).
     """
-    print(f"Version FedAtt | round={round} | stepsize={stepsize} | metric={metric}")
-
     w_clients = aggregator_flex_model["weights"]
     if not w_clients:
         raise ValueError("No client weights found in aggregator_flex_model['weights'].")
@@ -609,9 +594,7 @@ def aggregate_fedatt(
         for i in range(m):
             w_cli = w_clients[i][k].to(w_srv.device)
             diff = w_srv - w_cli
-            # torch.linalg.norm with `ord` requires 1D/2D tensors; weights with
-            # more dimensions (e.g. the feed-forward layer's Conv1d) are flattened
-            # before computing the norm to avoid shape errors.
+            # Flatten weights with more than 2 dimensions (e.g. Conv1d)
             att[k][i] = torch.linalg.norm(diff if diff.dim() <= 2 else diff.reshape(-1), ord=metric)
 
     # Step 2: softmax over the distances + server update

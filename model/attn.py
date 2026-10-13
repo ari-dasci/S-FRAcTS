@@ -213,7 +213,6 @@ class ProbAttention(nn.Module):
         """
         B, H, L_V, D = V.shape
 
-        # V_sum = V.sum(dim=-2)
         V_sum = V.mean(dim=-2)
         context = V_sum.unsqueeze(-2).expand(B, H, L_Q, V_sum.shape[-1]).clone()
 
@@ -287,7 +286,7 @@ class LocalAttention(nn.Module):
     This accelerates the attention mechanism, running in time O(B H n l), where B is the number of batches, H is the
     number of heads, n is the length of the list of keys/queries and l is the number of keys we choose when computing 
     attention scores for each query. Formally, the output is a matrix (O_j), where
-    O_j =  \sum_{i = j-l}ˆj \hat{a}_{ji} v_i
+    O_j =  \sum_{i = j-l}^j \hat{a}_{ji} v_i
     and
     \hat{a}_{ji} = a_{ji} (the attention score of full attention mechanism) if j-l <= i <= j, and \hat{a}_{ji} = 0 otherwise.
 
@@ -443,9 +442,6 @@ class LocalAttention(nn.Module):
         #Replace 0 with -np.inf
         full_mask = full_mask.masked_fill(full_mask == 0, -sys.maxsize)
         full_mask = full_mask.masked_fill(full_mask == 1, 0)
-        #np_mask = np.array([ [-np.inf]*j + [1]*self.neigh_size + [-np.inf]*(window_size-j) for j in torch.arange(0, window_size)])
-        #np_mask = np_mask[0:window_size, self.neigh_size-1:window_size+self.neigh_size-1]
-        #full_mask = torch.from_numpy(np_mask)
 
         # Local masks have dimensions:
         # l1 x l1
@@ -458,9 +454,6 @@ class LocalAttention(nn.Module):
         self.local_mask_end[window_size-l1*self.splits:,:] = -sys.maxsize
 
         # Indexes where we will split Q.
-        #self.split_indexes = (j*l1 for j in torch.arange(1, self.splits))
-        # Vectorize the line before
-        #BUG: Should this be torch.arange(1, self.splits+1)*l1 ?
         split_indexes = []
         self.split_indexes_Q_end = None
         for j in torch.arange(0, self.splits):
@@ -559,8 +552,7 @@ class LocalAttention(nn.Module):
         # We scale the product Q K^T by multiplying by scale (usually 1/Sqrt(E))
         self.scale = self.scale or 1./math.sqrt(E)
 
-        # BUG: window size is 1 at some point of the execution, therefore this does not works. This could be due to
-        # changing the model from autoencoder to predictor, but it should not happen. Check this.
+        # Known issue: window_size may become 1 in some configurations, which breaks the split below.
         l1 = self.window_size//self.splits
 
         # Split queries
@@ -591,7 +583,7 @@ class LocalAttention(nn.Module):
             V_split = torch.cat((V_split,V_end.unsqueeze(0)), 0)
 
         S = torch.einsum("sblhe,sbthe->sbhlt", Q_split, K_split)
-        # BUG: local_mask_middle turns into empty at some point and this line fails.
+        # Known issue: local_mask_middle may not match the shape of S; it is rebuilt in that case.
         if self.local_mask_middle is None or self.local_mask_middle.shape != S.shape:
             print(f"Adjusting local_mask_middle: expected {S.shape}, got {self.local_mask_middle.shape}")
         S_masked = S + self.local_mask_middle

@@ -59,7 +59,7 @@ class PositionalEncoding(nn.Module):
         pe += torch.sin(position * div_term)
         pe += torch.cos(position * div_term)
         pe = pe.unsqueeze(0)
-        # Not registered as parameter (it is not) but saved along them
+        # Registered as a buffer: saved with the model but not trained
         self.register_buffer('pe', pe)
 
     def forward(self, x, pos=0):

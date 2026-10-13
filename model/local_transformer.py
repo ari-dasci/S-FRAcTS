@@ -107,7 +107,5 @@ class LocalTransformerModel(Transformer_BaseModule):
         src = src * math.sqrt(self.n_feats)
         src = self.pos_encoder(src)
         memory = self.transformer_encoder(src)
-        # It seems like more than 1 layer generates non-learning schema, loss goes crazy
-        # Possible solution to add residual 
         x = self.transformer_decoder(tgt, memory)
         return x

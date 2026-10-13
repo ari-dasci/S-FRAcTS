@@ -286,18 +286,14 @@ def evaluate_checkpoint(model, dataloader, device, desc="Evaluating"):
 
 
 def append_json_result(json_path: Path, entry: dict):
-	"""Append `entry` to the JSON list stored at `json_path`, creating it if needed.
-	Re-reads the file first so concurrent runs writing to the same file don't clobber
-	each other's results."""
+	"""Append `entry` to the JSON list stored at `json_path`, creating it if needed."""
 	results = json.loads(json_path.read_text()) if json_path.exists() else []
 	results.append(entry)
 	json_path.write_text(json.dumps(results, indent=4))
 
 
 def save_checkpoint_with_meta(folder: Path, model, meta: dict):
-	"""Save a model checkpoint together with a meta.json describing the run
-	(model/attn/n_clients/seq_len/pred_len/alpha/...), so it can be reloaded
-	later without having to parse any of this back out of the folder name."""
+	"""Save a model checkpoint together with a meta.json describing the run."""
 	folder.mkdir(parents=True, exist_ok=True)
 	torch.save(model.state_dict(), folder / "checkpoint.pth")
 	(folder / "meta.json").write_text(json.dumps(meta, indent=4))
@@ -325,7 +321,7 @@ if __name__ == '__main__':
 	# Federation setup
 	parser.add_argument("--n_clients", type=int, default=10)
 	parser.add_argument("--n_rounds", type=int, default=30)
-	parser.add_argument("--alpha", type=float, default=0.5, help="Dirichlet alpha for quantity skew. None=equal split (default). Lower=more heterogeneous (e.g. 0.1, 0.5, 1.0)")
+	parser.add_argument("--alpha", type=float, default=0.5, help="Dirichlet concentration for the non-IID client split. Lower values give more unbalanced splits")
 
 	# Aggregation strategy
 	parser.add_argument("--agg_mode", choices=["", "Avg", "FRAcTS", "FedAtt"], default="")
@@ -359,7 +355,6 @@ if __name__ == '__main__':
 	output_attention = True
 	for_forecasting = True
 	for_transformer = True 
-	for_tsfedl = False
 	 
     # Load dataset
 	data_train, timestamps_train, data_test, timestamps_test = None, None, None, None
@@ -498,7 +493,7 @@ if __name__ == '__main__':
 
 			dataset_test = TimeSeriesDataset(torch.from_numpy(data_test), timestamps_test_dt,
 											sequence_length=meta["seq_len"], npred=meta["pred_len"], for_forecasting=for_forecasting,
-											for_transformer=for_transformer, for_tsfedl=for_tsfedl, for_test=True,time_unit=args.time_unit,freq = args.freq,
+											for_transformer=for_transformer, for_test=True,time_unit=args.time_unit,freq = args.freq,
 											scaler=train_scaler)
 			dataloader_test =DataLoader(dataset_test, batch_size=16, shuffle=False, num_workers=0, pin_memory=True)
 
@@ -552,7 +547,7 @@ if __name__ == '__main__':
 
 			dataset_val = TimeSeriesDataset(torch.from_numpy(data_val_eval), timestamps_val_eval_dt,
 											sequence_length=meta["seq_len"], npred=meta["pred_len"], for_forecasting=for_forecasting,
-											for_transformer=for_transformer, for_tsfedl=for_tsfedl, for_test=True,time_unit=args.time_unit,freq = args.freq)
+											for_transformer=for_transformer, for_test=True,time_unit=args.time_unit,freq = args.freq)
 			dataloader_val = DataLoader(dataset_val, batch_size=16, shuffle=False, num_workers=0, pin_memory=True)
 
 			metrics = evaluate_checkpoint(model, dataloader_val, device, desc="Validating")
@@ -590,14 +585,14 @@ if __name__ == '__main__':
 		# Create dataset for train and validation
 		dataset_train = TimeSeriesDataset(torch.from_numpy(data_train), timestamps_train_dt, 
 											sequence_length=window_size, npred= args.pred_len, for_forecasting=for_forecasting, 
-											for_transformer=for_transformer, for_tsfedl=for_tsfedl,time_unit=args.time_unit,freq = args.freq)
+											for_transformer=for_transformer,time_unit=args.time_unit,freq = args.freq)
 		
 		dataset_val = TimeSeriesDataset(torch.from_numpy(data_val), timestamps_val_dt, 
 										sequence_length=window_size, npred=args.pred_len, for_forecasting=for_forecasting, 
-										for_transformer=for_transformer, for_tsfedl=for_tsfedl,time_unit = args.time_unit,freq = args.freq)
+										for_transformer=for_transformer,time_unit = args.time_unit,freq = args.freq)
 		
 		# Create dataloader
-		dataloader_train = DataLoader(dataset_train, batch_size= args.batch_size, shuffle=False, num_workers=args.num_workers, pin_memory=True)
+		dataloader_train = DataLoader(dataset_train, batch_size= args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=True)
 		dataloader_val = DataLoader(dataset_val, batch_size= args.batch_size, shuffle=False, num_workers=args.num_workers, pin_memory=True)
 		
 		

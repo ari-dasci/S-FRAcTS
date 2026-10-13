@@ -89,7 +89,6 @@ class TransformerModel(Transformer_BaseModule):
         self.attn_params = attn_params
         self.pos_encoder = PositionalEncoding( self.d_model, 0.1, self.n_window)
         # We are placing many heads as single-valued time series (feats)
-        # TODO: dff=4*d_model see attention is all u need sec 3.3
         encoder_layers = TransformerEncoderLayer(d_model= self.d_model, nhead=self.n_head, attn=attn, attn_params=attn_params,
                                                  w_size=self.n_window, dim_feedforward=self.dim_feedforward, dropout=0.1)
         self.transformer_encoder = TransformerEncoder(encoder_layers, num_encoder_layers)
